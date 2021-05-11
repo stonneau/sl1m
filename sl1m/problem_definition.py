@@ -1,7 +1,7 @@
 from sl1m.constants_and_tools import default_transform_from_pos_normal, convert_surface_to_inequality
 from sl1m.tools.obj_to_constraints import load_obj, as_inequalities, rotate_inequalities
 import numpy as np
-
+import os
 
 class PhaseData:
     """
@@ -13,15 +13,17 @@ class PhaseData:
     phaseData.allRelativeK =  Relative constraints for the phase for each foot and each surface
     """
 
-    def __init__(self, i, R, surfaces, moving_foot, normal,  n_effectors, com_obj, foot_obj):
+    def __init__(self, i, R, surfaces, moving_foot, normal,  n_effectors, com_obj, foot_obj, convert_surfaces):
         self.id = i
         self.moving = moving_foot
         self.root_orientation = R
-        self.S = [convert_surface_to_inequality(s, True) for s in surfaces]
+        self.S = surfaces
+        if convert_surfaces:
+            self.S = [convert_surface_to_inequality(s, True) for s in surfaces]
         self.n_surfaces = len(self.S)
-        self.transform = default_transform_from_pos_normal(np.zeros(3), normal, R)
+        self.transform = default_transform_from_pos_normal(np.zeros(3), normal, R)     
+        self.generate_relative_K(n_effectors, foot_obj)   
         self.generate_K(n_effectors, com_obj)
-        self.generate_relative_K(n_effectors, foot_obj)
 
     def generate_K(self, n_effectors, obj):
         """
@@ -63,38 +65,56 @@ class Problem:
     pb.phaseData list of Phase data objects
     """
 
-    def __init__(self, Robot, suffix_com="_effector_frame_quasi_static_reduced.obj", suffix_feet="_reduced.obj", limb_names=None):
-        if limb_names:
-            self.n_effectors = len(limb_names)
-        else:
-            self.n_effectors = len(Robot.limbs_names)
-
+    """
+    Initialiser for the problem object
+    the relative constraints and com constraints must respect a specific naming convention:
+    for the relative constraints, use "XXX_contraints_in_YYYSUFFIX_FEET" where XXX is the effector
+    on which the constraints apply, YYY is the effector frame in which the constraints are expressed and SUFFIX_FEET is a user-chosen string
+    for the relative constraints, use "COM_constraints_in_XXXSUFFIX_COM" where XXX is the effector is the effector frame in which the constraints
+    are expressed and SUFFIX_COM is a user-chosen string
+    :param rbprm_robot: if using the rbprm framework, initialise automatically the problem from the robot instance, in which case
+    the other parameters are not required. If they are filled they will replace the parameters of the rbprm_robot
+    :param limb_names: names of the effectors considered for expressing the constraints 
+    :param constraint_path: path to the folder that contains the constraints files
+    :param suffix_com: suffix to use for the com constraints. By default contains the ".obj" extension
+    :param suffix_feet: suffix to use for the com constraints. By default contains the ".obj" extension
+    """
+    def __init__(self, rbprm_robot=None, suffix_com=".obj", suffix_feet=".obj", limb_names=None, constraint_path=None):
+        effectors = None
+        kinematic_constraints_path     = None
+        relative_feet_constraints_path = None
+        
+        if rbprm_robot is not None:
+            effectors = rbprm_robot.limbs_names
+            kinematic_constraints_path = rbprm_robot.kinematic_constraints_path
+            relative_feet_constraints_path = rbprm_robot.kinematic_constraints_path
+            
+        if limb_names is not None:
+            effectors = limb_names
+            
+        if constraint_path is not None:
+            kinematic_constraints_path     = constraint_path
+            relative_feet_constraints_path = constraint_path
+        
+        self.n_effectors = len(effectors)
         self.com_objects = []
         self.foot_objects = []
-        for foot in range(self.n_effectors):
-            if limb_names != None:
-                foot_name = limb_names[foot]
-            else:
-                foot_name = Robot.limbs_names[foot]
-            filekin = Robot.kinematic_constraints_path + "COM_constraints_in_" + foot_name + suffix_com
+        for foot, foot_name in enumerate(effectors):
+            filekin = kinematic_constraints_path + "COM_constraints_in_" + foot_name + suffix_com
             self.com_objects.append(as_inequalities(load_obj(filekin)))
 
             foot_object = []
-            for other in range(self.n_effectors):
+            for other, other_name in enumerate(effectors):
                 if other != foot:
-                    if limb_names != None:
-                        other_name = limb_names[other]
-                    else:
-                        other_name = Robot.dict_limb_joint[Robot.limbs_names[other]]
-                    filekin = Robot.relative_feet_constraints_path + \
+                    filekin = relative_feet_constraints_path + \
                         other_name + "_constraints_in_" + foot_name + suffix_feet
                     foot_object.append(as_inequalities(load_obj(filekin)))
                 else:
                     foot_object.append(None)
 
             self.foot_objects.append(foot_object)
-
-    def generate_problem(self, R, surfaces, gait, p0, c0):
+            
+    def generate_problem(self, R, surfaces, gait, p0, c0, convert_surfaces=True):
         """
         Build a SL1M problem for the Mixed Integer formulation,
         with all the kinematics and foot relative position constraints required
@@ -104,6 +124,7 @@ class Problem:
         :param gait: The gait of the robot (list of id of the moving foot)
         :param p0: The initial positions of the limbs
         :param c0: The initial position of the com
+        :param convert_surfaces: if True assume surfaces are described as a extreme points in a plan and converts them to inequalities
         :return: a "res" dictionnary with the format required by SL1M
         """
         normal = np.array([0, 0, 1])
@@ -113,7 +134,9 @@ class Problem:
         self.phaseData = []
         for i in range(self.n_phases):
             self.phaseData.append(PhaseData(i, 
-                R[i], surfaces[i], gait[i % self.n_effectors], normal, self.n_effectors, self.com_objects, self.foot_objects))
+                R[i], surfaces[i], gait[i % self.n_effectors], normal, self.n_effectors, self.com_objects, self.foot_objects,convert_surfaces))
+                
+        
 
     def __str__(self):
         string = "Problem: "
