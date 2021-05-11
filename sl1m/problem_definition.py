@@ -87,10 +87,10 @@ class Problem:
         if rbprm_robot is not None:
             effectors = rbprm_robot.limbs_names
             kinematic_constraints_path = rbprm_robot.kinematic_constraints_path
-            relative_feet_constraints_path = rbprm_robot.kinematic_constraints_path
+            relative_feet_constraints_path = rbprm_robot.relative_feet_constraints_path
             
         if limb_names is not None:
-            effectors = limb_names
+            effectors = limb_names[:]
             
         if constraint_path is not None:
             kinematic_constraints_path     = constraint_path
@@ -105,9 +105,13 @@ class Problem:
 
             foot_object = []
             for other, other_name in enumerate(effectors):
-                if other != foot:
+                if other != foot:                    
+                    if limb_names is not None:
+                        o_name = other_name
+                    else:
+                        o_name = rbprm_robot.dict_limb_joint[rbprm_robot.limbs_names[other]]
                     filekin = relative_feet_constraints_path + \
-                        other_name + "_constraints_in_" + foot_name + suffix_feet
+                        o_name + "_constraints_in_" + foot_name + suffix_feet
                     foot_object.append(as_inequalities(load_obj(filekin)))
                 else:
                     foot_object.append(None)
